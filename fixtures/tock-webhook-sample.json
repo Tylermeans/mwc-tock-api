@@ -1,0 +1,23 @@
+{
+  "id": 987654321,
+  "dateTime": "18:30",
+  "partySize": 4,
+  "serviceDateTimestamp": 1753310400000,
+  "createdTimestamp": 1753200000000,
+  "lastUpdatedTimestamp": 1753301400000,
+  "partyState": "EXPECTED",
+  "isCancelled": false,
+  "confirmationCode": "TOCK1234",
+  "business": { "id": 111, "name": "Midwest Cards", "timeZone": "America/New_York" },
+  "dinerPatron": {
+    "id": 555,
+    "firstName": "Casey",
+    "lastName": "Rivera",
+    "email": "casey.rivera@example.com",
+    "phone": "5551234567",
+    "zipCode": "43085"
+  },
+  "ownerPatron": { "id": 555, "firstName": "Casey", "lastName": "Rivera" },
+  "note": [ { "noteType": "BOOKING_GENERAL_NOTE", "text": "Anniversary — window table if possible" } ],
+  "totalPriceCents": 0
+}

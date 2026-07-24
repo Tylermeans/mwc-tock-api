@@ -1,0 +1,304 @@
+{
+  "name": "Midwest Cards - Tock Reservation Board (Ingest + Serve)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## INGEST  Tock → Google Sheet\n\n**Setup:**\n1. In **Redact & Shape**, set `SHARED_SECRET` to a long random string.\n2. On **Upsert Reservation**, attach your Google Sheets credential and pick the spreadsheet + `Waitlist` tab.\n3. Copy this webhook's **Production URL** and give it to Tock as the *reservations* endpoint (with header `x-tock-token: <your secret>`).",
+        "height": 300,
+        "width": 380,
+        "color": 4
+      },
+      "id": "note-ingest",
+      "name": "Note - Ingest",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## SERVE  Google Sheet → /waitlist.json\n\n**Setup:**\n1. On **Read Reservations**, attach the same Google Sheets credential + spreadsheet.\n2. In **Build Board JSON**, set `BUSINESS_TZ` if not `America/New_York`.\n3. Point the display board's `DATA_URL` at this webhook's **Production URL**.\n\nReads the same sheet whether rows came from Tock **or** were typed in by staff (bridge mode).",
+        "height": 320,
+        "width": 380,
+        "color": 5
+      },
+      "id": "note-serve",
+      "name": "Note - Serve",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        200,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Privacy\nThe scrubbed record (first name + last initial + time + status) is the **only** data written to the sheet. Full last name, email, phone, party size, notes and payment are dropped in **Redact & Shape** before anything is stored. There is no PII at rest to leak.",
+        "height": 180,
+        "width": 380,
+        "color": 3
+      },
+      "id": "note-privacy",
+      "name": "Note - Privacy",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tock-reservation",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-ingest",
+      "name": "Tock Reservation Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        240
+      ],
+      "webhookId": "tock-reservation-ingest"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================================\n// REDACT & SHAPE  --  Tock reservation webhook -> privacy-minimal record\n// This is the ONLY place Tock's raw payload is read. If a field name is ever\n// wrong, fix it HERE (check api.exploretock.com reservation data model).\n// Everything downstream (the sheet, the board) only ever sees 4 safe fields.\n// ============================================================================\n\n// --- CONFIG: must match the auth header you register with Tock ---\nconst AUTH_HEADER   = 'x-tock-token';\nconst SHARED_SECRET = 'CHANGE_ME_TO_A_LONG_RANDOM_STRING';\n\nconst input   = $input.first().json;\nconst headers = input.headers || {};\nconst token   = headers[AUTH_HEADER] || headers[AUTH_HEADER.toLowerCase()];\n\nif (SHARED_SECRET && token !== SHARED_SECRET) {\n  throw new Error('Unauthorized: missing or wrong ' + AUTH_HEADER + ' header');\n}\n\n// Tock may POST the reservation as the body, or nested under .reservation\nconst body = input.body || input;\nconst r    = body.reservation || body;\n\n// Guest name shown in Tock = dinerPatron (fallback ownerPatron). We keep the\n// first name + last INITIAL only. Full last name / email / phone never leave here.\nconst patron      = r.dinerPatron || r.ownerPatron || {};\nconst firstName   = (patron.firstName || '').trim();\nconst lastName    = (patron.lastName  || '').trim();\nconst lastInitial = lastName ? lastName.charAt(0).toUpperCase() : '';\n\n// Tock dateTime = 24h \"HH:MM\" in the business timezone -> \"h:mm AM/PM\"\nfunction to12h(hhmm) {\n  if (!hhmm || String(hhmm).indexOf(':') === -1) return '';\n  const p  = String(hhmm).split(':');\n  let   h  = parseInt(p[0], 10);\n  const m  = p[1];\n  const ap = h >= 12 ? 'PM' : 'AM';\n  h = h % 12; if (h === 0) h = 12;\n  return h + ':' + m + ' ' + ap;\n}\nconst timeDisplay = to12h(r.dateTime);\n\n// serviceDateTimestamp = ms since epoch (UTC) -- used for sorting / today-filter\nconst sortKey = r.serviceDateTimestamp ? Number(r.serviceDateTimestamp) : 0;\n\n// Map Tock partyState + isCancelled -> board status\nconst state = String(r.partyState || '').toUpperCase();\nlet status;\nif (r.isCancelled === true || state === 'CANCELLED' || state === 'NO_SHOW') {\n  status = 'cancelled';\n} else if (state === 'LEFT') {\n  status = 'left';\n} else if (['SEATED', 'PARTIALLY_SEATED', 'ARRIVED', 'PARTIALLY_ARRIVED'].indexOf(state) !== -1) {\n  status = 'seated';\n} else {\n  status = 'upcoming';  // EXPECTED / default\n}\n\n// Stable dedup key so edits + cancels update the same row instead of duplicating\nconst reservationId = (r.id !== undefined && r.id !== null && r.id !== '')\n  ? String(r.id)\n  : String(r.confirmationCode || r.walkinId || '');\n\nif (!reservationId) {\n  throw new Error('No reservation id found in payload -- check the field mapping.');\n}\n\n// Output ONLY the scrubbed fields. These become the sheet columns.\nreturn [{\n  json: {\n    reservationId: reservationId,\n    sortKey:       sortKey,\n    timeDisplay:   timeDisplay,\n    firstName:     firstName,\n    lastInitial:   lastInitial,\n    status:        status,\n    updatedAt:     new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "code-redact",
+      "name": "Redact & Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "matchingColumns": [
+            "reservationId"
+          ],
+          "value": {},
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "gs-upsert",
+      "name": "Upsert Reservation",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        740,
+        240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "resp-ack",
+      "name": "Ack 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "waitlist.json",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-serve",
+      "name": "Waitlist JSON",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        620
+      ],
+      "webhookId": "waitlist-json-serve"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "options": {}
+      },
+      "id": "gs-read",
+      "name": "Read Reservations",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        500,
+        620
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================================\n// BUILD BOARD JSON  --  sheet rows -> the exact shape the display board wants:\n// { updatedAt, reservations: [ { time, firstName, lastInitial, status } ] }\n// ============================================================================\n\n// --- CONFIG ---\nconst BUSINESS_TZ    = 'America/New_York'; // your shop timezone\nconst TODAY_ONLY     = true;               // hide anything not scheduled today\nconst KEEP_AFTER_MIN = 20;                 // keep a slot on the board this long after its time\nconst HIDE_STATUSES  = ['cancelled', 'left', 'no_show'];\n\nconst rows = $input.all().map(function (i) { return i.json; }).filter(Boolean);\nconst now  = Date.now();\n\nfunction localDay(ms, tz) {\n  return new Intl.DateTimeFormat('en-CA', {\n    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'\n  }).format(new Date(ms));\n}\nfunction minsFromDisplay(t) {\n  const m = String(t || '').match(/(\\d+):(\\d+)\\s*([AP]M)?/i);\n  if (!m) return null;\n  let   h  = parseInt(m[1], 10);\n  const mm = parseInt(m[2], 10);\n  const ap = (m[3] || '').toUpperCase();\n  if (ap === 'PM' && h < 12) h += 12;\n  if (ap === 'AM' && h === 12) h = 0;\n  return h * 60 + mm;\n}\nfunction minsFromEpoch(ms, tz) {\n  const s = new Intl.DateTimeFormat('en-GB', {\n    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false\n  }).format(new Date(ms));\n  return minsFromDisplay(s);\n}\n\nconst todayStr = localDay(now, BUSINESS_TZ);\n\nconst cleaned = rows.filter(function (row) {\n  const status = String(row.status || 'upcoming').toLowerCase();\n  if (HIDE_STATUSES.indexOf(status) !== -1) return false;\n\n  const sortKey = Number(row.sortKey || 0);\n  if (sortKey) {\n    if (TODAY_ONLY && localDay(sortKey, BUSINESS_TZ) !== todayStr) return false;\n    if ((now - sortKey) > KEEP_AFTER_MIN * 60000) return false;\n  }\n  return true;\n});\n\ncleaned.sort(function (a, b) {\n  const ao = Number(a.sortKey) ? minsFromEpoch(Number(a.sortKey), BUSINESS_TZ) : minsFromDisplay(a.timeDisplay);\n  const bo = Number(b.sortKey) ? minsFromEpoch(Number(b.sortKey), BUSINESS_TZ) : minsFromDisplay(b.timeDisplay);\n  return (ao == null ? 9999 : ao) - (bo == null ? 9999 : bo);\n});\n\nconst reservations = cleaned.map(function (row) {\n  const s = String(row.status || 'upcoming').toLowerCase();\n  return {\n    time:        row.timeDisplay || '',\n    firstName:   row.firstName || '',\n    lastInitial: row.lastInitial || '',\n    status:      s === 'seated' ? 'seated' : 'upcoming'\n  };\n});\n\nreturn [{ json: { updatedAt: new Date().toISOString(), reservations: reservations } }];\n"
+      },
+      "id": "code-build",
+      "name": "Build Board JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              },
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      },
+      "id": "resp-json",
+      "name": "Return JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        620
+      ]
+    }
+  ],
+  "connections": {
+    "Tock Reservation Webhook": {
+      "main": [
+        [
+          {
+            "node": "Redact & Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact & Shape": {
+      "main": [
+        [
+          {
+            "node": "Upsert Reservation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Reservation": {
+      "main": [
+        [
+          {
+            "node": "Ack 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waitlist JSON": {
+      "main": [
+        [
+          {
+            "node": "Read Reservations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Reservations": {
+      "main": [
+        [
+          {
+            "node": "Build Board JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Board JSON": {
+      "main": [
+        [
+          {
+            "node": "Return JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

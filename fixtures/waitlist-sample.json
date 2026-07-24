@@ -1,0 +1,10 @@
+{
+  "updatedAt": "2026-07-24T17:32:00-04:00",
+  "reservations": [
+    { "time": "5:30 PM", "firstName": "Marcus", "lastInitial": "T", "status": "seated"   },
+    { "time": "5:45 PM", "firstName": "Priya",  "lastInitial": "N", "status": "seated"   },
+    { "time": "6:00 PM", "firstName": "Devon",  "lastInitial": "R", "status": "upcoming" },
+    { "time": "6:30 PM", "firstName": "Casey",  "lastInitial": "R", "status": "upcoming" },
+    { "time": "6:45 PM", "firstName": "Sofia",  "lastInitial": "L", "status": "upcoming" }
+  ]
+}

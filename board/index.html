@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Midwest Cards — Reservations</title>
+
+<!--
+  ============================================================================
+  MIDWEST CARDS — CUSTOMER-FACING RESERVATION BOARD
+  ============================================================================
+  A "now serving" / departures-style board for a lobby TV or kiosk.
+
+  PRIVACY BY DESIGN:
+  This page NEVER receives full guest records. It consumes only a pre-scrubbed
+  feed containing time, first name, and last initial. Do the redaction
+  server-side, on webhook ingest, BEFORE anything reaches this endpoint. Phone,
+  email, party size, notes, and payment fields must never leave your backend.
+
+  TO GO LIVE:
+  1. Point DATA_URL (below) at your scrubbed feed, e.g. "/waitlist.json".
+  2. Your backend must return exactly this shape and nothing more:
+
+     {
+       "updatedAt": "2026-07-24T17:32:00-04:00",   // ISO 8601, optional
+       "reservations": [
+         { "time": "5:30 PM", "firstName": "Marcus", "lastInitial": "T", "status": "seated"   },
+         { "time": "5:45 PM", "firstName": "Priya",  "lastInitial": "N", "status": "arriving" },
+         { "time": "6:00 PM", "firstName": "Devon",  "lastInitial": "R", "status": "upcoming" }
+       ]
+     }
+
+     status is one of: "arriving" (up next) | "seated" (checked in) | "upcoming".
+     status is optional — if omitted, the board infers "up next" by time.
+
+  If DATA_URL is empty OR a fetch fails, the board falls back to the last good
+  data (never a blank screen in front of customers), then to demo data.
+  ============================================================================
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --navy:        #001D48;
+    --navy-2:      #04122F;
+    --navy-panel:  #06183B;
+    --navy-line:   #12294F;
+    --gold:        #E8B144;
+    --gold-soft:   rgba(232, 177, 68, 0.12);
+    --white:       #F6F4EC;
+    --slate:       #7E96BE;
+    --slate-dim:   #5A719B;
+    --seated:      #5FC59B;
+
+    --display: "Barlow Condensed", "Oswald", "Arial Narrow", sans-serif;
+    --body:    "Roboto", system-ui, -apple-system, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--navy);
+    color: var(--white);
+    font-family: var(--body);
+    overflow: hidden;
+    /* faint vertical lift so the top reads brighter than the bottom on a large screen */
+    background-image: linear-gradient(180deg, #04204F 0%, var(--navy) 42%, #001133 100%);
+  }
+
+  .board {
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    padding: clamp(20px, 2.6vw, 48px);
+    gap: clamp(16px, 2vw, 34px);
+  }
+
+  /* ---------- Header ---------- */
+  .header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--navy-line);
+    padding-bottom: clamp(12px, 1.4vw, 22px);
+  }
+
+  .brand { display: flex; align-items: baseline; gap: clamp(10px, 1.2vw, 20px); }
+
+  .brand__mark {
+    font-family: var(--display);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    font-size: clamp(30px, 3.4vw, 60px);
+    line-height: 0.9;
+    color: var(--white);
+    text-transform: uppercase;
+  }
+  .brand__mark span { color: var(--gold); }
+
+  .brand__label {
+    font-family: var(--body);
+    font-weight: 500;
+    font-size: clamp(11px, 0.95vw, 17px);
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--slate);
+    padding-bottom: 0.35em;
+  }
+
+  .clock { text-align: right; line-height: 1; }
+  .clock__time {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(30px, 3.4vw, 60px);
+    letter-spacing: 0.02em;
+    color: var(--white);
+    font-variant-numeric: tabular-nums;
+  }
+  .clock__time .sec { color: var(--gold); }
+  .clock__date {
+    font-family: var(--body);
+    font-weight: 400;
+    font-size: clamp(11px, 0.95vw, 17px);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--slate);
+    margin-top: 0.5em;
+  }
+
+  /* ---------- Hero: UP NEXT ---------- */
+  .hero {
+    position: relative;
+    background: var(--navy-panel);
+    border: 1px solid var(--navy-line);
+    border-left: 8px solid var(--gold);
+    border-radius: 6px;
+    padding: clamp(18px, 2vw, 40px) clamp(24px, 3vw, 56px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: clamp(20px, 3vw, 60px);
+    overflow: hidden;
+  }
+  .hero::after {
+    /* quiet gold wash bleeding from the accent edge — the one flourish */
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--gold-soft), transparent 46%);
+    pointer-events: none;
+  }
+  .hero__label {
+    font-family: var(--body);
+    font-weight: 700;
+    font-size: clamp(13px, 1.15vw, 22px);
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 0.5em;
+    position: relative;
+  }
+  .hero__label::before {
+    content: "";
+    display: inline-block;
+    width: 0.7em; height: 0.7em;
+    border-radius: 50%;
+    background: var(--gold);
+    margin-right: 0.7em;
+    vertical-align: middle;
+    animation: pulse 1.9s ease-in-out infinite;
+  }
+  .hero__name {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(46px, 6.6vw, 132px);
+    line-height: 0.9;
+    color: var(--white);
+    position: relative;
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+  .hero__time {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(40px, 5vw, 104px);
+    line-height: 0.9;
+    color: var(--gold);
+    white-space: nowrap;
+    text-align: right;
+    position: relative;
+    font-variant-numeric: tabular-nums;
+  }
+  .hero__time small {
+    display: block;
+    font-family: var(--body);
+    font-weight: 500;
+    font-size: clamp(11px, 0.95vw, 18px);
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--slate);
+    margin-bottom: 0.4em;
+  }
+  .hero.is-empty { border-left-color: var(--navy-line); justify-content: center; }
+  .hero.is-empty::after { display: none; }
+  .hero__empty {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: clamp(28px, 3.6vw, 64px);
+    color: var(--slate);
+    text-align: center;
+  }
+
+  /* ---------- List: upcoming ---------- */
+  .list-wrap { display: flex; flex-direction: column; min-height: 0; }
+
+  .list-head {
+    display: grid;
+    grid-template-columns: minmax(160px, 22%) 1fr minmax(150px, 20%);
+    align-items: center;
+    padding: 0 clamp(16px, 2vw, 40px) clamp(8px, 0.9vw, 16px);
+    font-family: var(--body);
+    font-weight: 500;
+    font-size: clamp(11px, 0.95vw, 17px);
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--slate-dim);
+  }
+  .list-head .col-status { text-align: right; }
+
+  .rows { display: flex; flex-direction: column; gap: clamp(8px, 0.85vw, 14px); min-height: 0; }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(160px, 22%) 1fr minmax(150px, 20%);
+    align-items: center;
+    background: var(--navy-2);
+    border: 1px solid var(--navy-line);
+    border-radius: 5px;
+    padding: clamp(12px, 1.5vw, 26px) clamp(16px, 2vw, 40px);
+    animation: rise 0.45s ease both;
+  }
+  .row__time {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(30px, 3.5vw, 62px);
+    line-height: 1;
+    color: var(--white);
+    font-variant-numeric: tabular-nums;
+  }
+  .row__name {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: clamp(30px, 3.5vw, 62px);
+    line-height: 1;
+    color: var(--white);
+    text-transform: uppercase;
+    letter-spacing: 0.01em;
+  }
+  .row__status { justify-self: end; }
+
+  .pill {
+    font-family: var(--body);
+    font-weight: 700;
+    font-size: clamp(12px, 1.05vw, 20px);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    padding: 0.45em 1.1em;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill--upcoming { color: var(--slate);  background: rgba(126, 150, 190, 0.12); border: 1px solid rgba(126,150,190,0.28); }
+  .pill--seated   { color: var(--seated); background: rgba(95, 197, 155, 0.12);  border: 1px solid rgba(95,197,155,0.30); }
+  .pill--arriving { color: var(--navy);   background: var(--gold); }
+
+  .row--seated .row__time,
+  .row--seated .row__name { color: var(--slate); }
+
+  /* ---------- Footer ---------- */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 2px solid var(--navy-line);
+    padding-top: clamp(10px, 1.2vw, 18px);
+    font-family: var(--body);
+    font-size: clamp(11px, 0.95vw, 17px);
+    letter-spacing: 0.06em;
+    color: var(--slate-dim);
+  }
+  .footer__note { color: var(--slate); }
+  .footer__status { display: flex; align-items: center; gap: 0.6em; font-variant-numeric: tabular-nums; }
+  .live-dot {
+    width: 0.7em; height: 0.7em; border-radius: 50%;
+    background: var(--seated);
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  .footer__page { text-align: right; letter-spacing: 0.18em; }
+
+  /* ---------- Motion ---------- */
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes rise  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .page-fade { animation: fadeIn 0.5s ease both; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="board">
+    <header class="header">
+      <div class="brand">
+        <!-- Swap this type wordmark for your official logo <img> when ready -->
+        <div class="brand__mark">MIDWEST<span>CARDS</span></div>
+        <div class="brand__label">Reservations</div>
+      </div>
+      <div class="clock">
+        <div class="clock__time" id="clock"><span>--:--</span></div>
+        <div class="clock__date" id="date">—</div>
+      </div>
+    </header>
+
+    <section class="hero" id="hero">
+      <div class="hero__empty">Loading…</div>
+    </section>
+
+    <div class="list-wrap">
+      <div class="list-head">
+        <div class="col-time">Time</div>
+        <div class="col-name">Name</div>
+        <div class="col-status">Status</div>
+      </div>
+      <div class="rows" id="rows"></div>
+    </div>
+
+    <footer class="footer">
+      <div class="footer__note">Not on the board yet? See a team member at the bar.</div>
+      <div class="footer__status"><span class="live-dot"></span><span id="updated">Live</span></div>
+      <div class="footer__page" id="pager"></div>
+    </footer>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ======= CONFIGURE ME =======
+  var DATA_URL = new URLSearchParams(window.location.search).get("data") || "";     // e.g. "/waitlist.json" — leave "" to run on demo data
+  var REFRESH_MS    = 20000;  // how often to pull fresh reservations
+  var ROWS_PER_PAGE = 5;      // rows shown per page on the board (excludes the hero)
+  var PAGE_MS       = 9000;   // if more than one page, how long each page shows
+  // =============================
+
+  var lastGood = null;   // last successfully loaded payload (guards against blank screens)
+  var pages = [];        // paginated upcoming rows
+  var pageIndex = 0;
+
+  // ---- Clock (ticks every second; not decorative — it's the "current time" anchor) ----
+  function tickClock() {
+    var now = new Date();
+    var h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+    var ampm = h >= 12 ? "PM" : "AM";
+    var hh = h % 12; if (hh === 0) hh = 12;
+    var mm = m < 10 ? "0" + m : m;
+    var ss = s < 10 ? "0" + s : s;
+    document.getElementById("clock").innerHTML =
+      hh + ":" + mm + '<span class="sec">:' + ss + "</span> " + ampm;
+    document.getElementById("date").textContent = now.toLocaleDateString("en-US", {
+      weekday: "long", month: "long", day: "numeric"
+    });
+  }
+
+  // ---- Demo data: a handful of reservations around "now" so the board looks live ----
+  function demoData() {
+    var base = new Date();
+    base.setSeconds(0, 0);
+    function slot(offsetMin) {
+      var d = new Date(base.getTime() + offsetMin * 60000);
+      var h = d.getHours() % 12; if (h === 0) h = 12;
+      var m = d.getMinutes(); m = m < 10 ? "0" + m : m;
+      return h + ":" + m + " " + (d.getHours() >= 12 ? "PM" : "AM");
+    }
+    return {
+      updatedAt: new Date().toISOString(),
+      reservations: [
+        { time: slot(-20), firstName: "Marcus",  lastInitial: "T", status: "seated"   },
+        { time: slot(-8),  firstName: "Priya",   lastInitial: "N", status: "seated"   },
+        { time: slot(5),   firstName: "Devon",   lastInitial: "R", status: "arriving" },
+        { time: slot(20),  firstName: "Sofia",   lastInitial: "L", status: "upcoming" },
+        { time: slot(35),  firstName: "Elijah",  lastInitial: "B", status: "upcoming" },
+        { time: slot(50),  firstName: "Hannah",  lastInitial: "K", status: "upcoming" },
+        { time: slot(65),  firstName: "Andre",   lastInitial: "W", status: "upcoming" },
+        { time: slot(80),  firstName: "Grace",   lastInitial: "P", status: "upcoming" },
+        { time: slot(95),  firstName: "Tyler",   lastInitial: "S", status: "upcoming" }
+      ]
+    };
+  }
+
+  // ---- Parse a "5:45 PM" string to minutes-since-midnight for sorting ----
+  function toMinutes(t) {
+    if (!t) return 0;
+    var mtch = String(t).match(/(\d+):(\d+)\s*([AaPp][Mm])?/);
+    if (!mtch) return 0;
+    var h = parseInt(mtch[1], 10), m = parseInt(mtch[2], 10);
+    var ap = (mtch[3] || "").toUpperCase();
+    if (ap === "PM" && h < 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    return h * 60 + m;
+  }
+
+  function statusLabel(s) {
+    if (s === "arriving") return "Up next";
+    if (s === "seated")   return "Seated";
+    return "Upcoming";
+  }
+
+  function esc(str) {
+    var d = document.createElement("div");
+    d.textContent = str == null ? "" : String(str);
+    return d.innerHTML;
+  }
+
+  // ---- Render the whole board from a payload ----
+  function render(data) {
+    var list = (data && data.reservations ? data.reservations.slice() : []);
+    list.sort(function (a, b) { return toMinutes(a.time) - toMinutes(b.time); });
+
+    // Hero = explicit "arriving", else earliest non-seated, else first row.
+    var hero = null;
+    for (var i = 0; i < list.length; i++) { if (list[i].status === "arriving") { hero = list[i]; break; } }
+    if (!hero) { for (var j = 0; j < list.length; j++) { if (list[j].status !== "seated") { hero = list[j]; break; } } }
+    if (!hero && list.length) hero = list[0];
+
+    renderHero(hero);
+
+    // The list shows everyone except the hero.
+    var rest = list.filter(function (r) { return r !== hero; });
+    paginate(rest);
+    renderPage();
+
+    // Footer freshness stamp.
+    var stamp = data && data.updatedAt ? new Date(data.updatedAt) : new Date();
+    document.getElementById("updated").textContent = "Updated " +
+      stamp.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+
+  function renderHero(hero) {
+    var el = document.getElementById("hero");
+    if (!hero) {
+      el.className = "hero is-empty";
+      el.innerHTML = '<div class="hero__empty">No reservations on the board right now</div>';
+      return;
+    }
+    el.className = "hero";
+    el.innerHTML =
+      '<div>' +
+        '<div class="hero__label">Up next</div>' +
+        '<div class="hero__name">' + esc(hero.firstName) + " " + esc(hero.lastInitial) + '.</div>' +
+      '</div>' +
+      '<div class="hero__time"><small>Reservation</small>' + esc(hero.time) + '</div>';
+  }
+
+  function paginate(rows) {
+    pages = [];
+    for (var i = 0; i < rows.length; i += ROWS_PER_PAGE) {
+      pages.push(rows.slice(i, i + ROWS_PER_PAGE));
+    }
+    if (pages.length === 0) pages = [[]];
+    if (pageIndex >= pages.length) pageIndex = 0;
+  }
+
+  function renderPage() {
+    var rowsEl = document.getElementById("rows");
+    var page = pages[pageIndex] || [];
+    var html = "";
+    for (var i = 0; i < page.length; i++) {
+      var r = page[i];
+      var s = r.status || "upcoming";
+      html +=
+        '<div class="row row--' + esc(s) + ' page-fade">' +
+          '<div class="row__time">' + esc(r.time) + '</div>' +
+          '<div class="row__name">' + esc(r.firstName) + " " + esc(r.lastInitial) + '.</div>' +
+          '<div class="row__status"><span class="pill pill--' + esc(s) + '">' + statusLabel(s) + '</span></div>' +
+        '</div>';
+    }
+    rowsEl.innerHTML = html;
+
+    var pager = document.getElementById("pager");
+    pager.textContent = pages.length > 1 ? "Page " + (pageIndex + 1) + " / " + pages.length : "";
+  }
+
+  function cyclePage() {
+    if (pages.length <= 1) return;
+    pageIndex = (pageIndex + 1) % pages.length;
+    renderPage();
+  }
+
+  // ---- Fetch fresh data; degrade gracefully so customers never see an error ----
+  function load() {
+    if (!DATA_URL) { lastGood = demoData(); render(lastGood); return; }
+    fetch(DATA_URL, { cache: "no-store" })
+      .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(function (data) {
+        if (!data || !Array.isArray(data.reservations)) throw new Error("bad shape");
+        lastGood = data;
+        render(data);
+      })
+      .catch(function () {
+        // Keep showing the last good board; only fall to demo if we never loaded.
+        render(lastGood || demoData());
+      });
+  }
+
+  // ---- Boot ----
+  tickClock();
+  load();
+  setInterval(tickClock, 1000);
+  setInterval(load, REFRESH_MS);
+  setInterval(cyclePage, PAGE_MS);
+})();
+</script>
+</body>
+</html>
