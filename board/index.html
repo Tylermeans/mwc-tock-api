@@ -274,7 +274,8 @@
     white-space: nowrap;
   }
   .pill--upcoming { color: var(--slate);  background: rgba(126, 150, 190, 0.12); border: 1px solid rgba(126,150,190,0.28); }
-  .pill--seated   { color: var(--seated); background: rgba(95, 197, 155, 0.12);  border: 1px solid rgba(95,197,155,0.30); }
+  .pill--arrived  { color: var(--seated); background: rgba(95, 197, 155, 0.12);  border: 1px solid rgba(95,197,155,0.30); }
+  .pill--seated   { color: var(--navy);   background: var(--seated); }
   .pill--arriving { color: var(--navy);   background: var(--gold); }
 
   .row--seated .row__time,
@@ -417,7 +418,8 @@
 
   function statusLabel(s) {
     if (s === "arriving") return "Up next";
-    if (s === "seated")   return "Seated";
+    if (s === "arrived")  return "Checked in";
+    if (s === "seated")   return "Being served";
     return "Upcoming";
   }
 
@@ -432,10 +434,11 @@
     var list = (data && data.reservations ? data.reservations.slice() : []);
     list.sort(function (a, b) { return toMinutes(a.time) - toMinutes(b.time); });
 
-    // Hero = explicit "arriving", else earliest non-seated, else first row.
+    // Hero = explicit "arriving", else earliest still-expected guest
+    // (skip anyone already checked in or being served), else first row.
     var hero = null;
     for (var i = 0; i < list.length; i++) { if (list[i].status === "arriving") { hero = list[i]; break; } }
-    if (!hero) { for (var j = 0; j < list.length; j++) { if (list[j].status !== "seated") { hero = list[j]; break; } } }
+    if (!hero) { for (var j = 0; j < list.length; j++) { if (list[j].status !== "seated" && list[j].status !== "arrived") { hero = list[j]; break; } } }
     if (!hero && list.length) hero = list[0];
 
     renderHero(hero);

@@ -22,7 +22,7 @@ Returned by the n8n **Serve** chain. Response body:
 | `reservations[].time`        | string | Display string, e.g. "6:30 PM".                             |
 | `reservations[].firstName`   | string | First name only.                                            |
 | `reservations[].lastInitial` | string | Single letter, no period.                                   |
-| `reservations[].status`      | string | `"upcoming"` or `"seated"` only.                            |
+| `reservations[].status`      | string | `"upcoming"`, `"arrived"` (checked in, waiting) or `"seated"` (being served). |
 
 Response headers set by Serve: `Access-Control-Allow-Origin: *`, `Cache-Control: no-store`.
 
